@@ -147,18 +147,18 @@ hooks, _, err := client.Hooks.List(ctx, &posthook.HookListParams{
 fmt.Printf("Found %d hooks\n", len(hooks))
 ```
 
-### Pagination loop
+### Cursor-based pagination
 
-Paginate by increasing `Offset`. When the returned slice is shorter than `Limit`, you've reached the last page:
+Use `PostAtAfter` as a cursor. After each page, advance it to the last hook's `PostAt`:
 
 ```go
 limit := 100
-offset := 0
+var cursor time.Time
 for {
     hooks, _, err := client.Hooks.List(ctx, &posthook.HookListParams{
-        Status: posthook.StatusFailed,
-        Limit:  limit,
-        Offset: offset,
+        Status:      posthook.StatusFailed,
+        Limit:       limit,
+        PostAtAfter: cursor,
     })
     if err != nil {
         log.Fatal(err)
@@ -171,7 +171,21 @@ for {
     if len(hooks) < limit {
         break // last page
     }
-    offset += len(hooks)
+    cursor = hooks[len(hooks)-1].PostAt
+}
+```
+
+Or use `ListAll` to auto-paginate:
+
+```go
+iter := client.Hooks.ListAll(ctx, &posthook.HookListAllParams{
+    Status: posthook.StatusFailed,
+})
+for hook, err := range iter {
+    if err != nil {
+        log.Fatal(err)
+    }
+    fmt.Println(hook.ID, hook.FailureError)
 }
 ```
 
