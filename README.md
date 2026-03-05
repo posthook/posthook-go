@@ -268,6 +268,52 @@ delivery, err := client.Signatures.ParseDelivery(body, r.Header,
 )
 ```
 
+## Async Hooks
+
+When [async hooks](https://posthook.io/docs/essentials/async-hooks) are enabled, `ParseDelivery` populates `AckURL` and `NackURL` on the delivery. Return 202 from your handler and call back when processing completes.
+
+```go
+func handleWebhook(w http.ResponseWriter, r *http.Request) {
+    body, _ := io.ReadAll(r.Body)
+
+    delivery, err := client.Signatures.ParseDelivery(body, r.Header)
+    if err != nil {
+        http.Error(w, "invalid signature", http.StatusUnauthorized)
+        return
+    }
+
+    w.WriteHeader(http.StatusAccepted)
+    go func() {
+        if err := processVideo(delivery.Data); err != nil {
+            delivery.Nack(context.Background(), map[string]any{"error": err.Error()})
+            return
+        }
+        delivery.Ack(context.Background(), nil)
+    }()
+}
+```
+
+Both `Ack()` and `Nack()` return a `*CallbackResult`:
+
+```go
+result, err := delivery.Ack(ctx, nil)
+fmt.Println(result.Applied) // true if state changed, false if already resolved
+fmt.Println(result.Status)  // "completed", "not_found", "conflict", etc.
+```
+
+`Ack()` and `Nack()` return a result (not an error) for `200`, `404`, and `409` responses. They return a `*CallbackError` for `401` (invalid token) and `410` (expired).
+
+If processing happens in a separate worker, use the raw callback URLs instead:
+
+```go
+// Pass URLs through your queue
+queue.Add("transcode", map[string]string{
+    "videoId": videoId,
+    "ackUrl":  delivery.AckURL,
+    "nackUrl": delivery.NackURL,
+})
+```
+
 ## Error Handling
 
 All API errors are typed, enabling precise error handling with `errors.As()`:

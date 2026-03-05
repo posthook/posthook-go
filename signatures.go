@@ -150,7 +150,7 @@ func (s *SignaturesService) ParseDelivery(body []byte, headers http.Header, opts
 	createdAt, _ := time.Parse(time.RFC3339, payload.CreatedAt)
 	updatedAt, _ := time.Parse(time.RFC3339, payload.UpdatedAt)
 
-	return &Delivery{
+	delivery := &Delivery{
 		HookID:    hookID,
 		Timestamp: timestamp,
 		Path:      payload.Path,
@@ -160,5 +160,15 @@ func (s *SignaturesService) ParseDelivery(body []byte, headers http.Header, opts
 		PostedAt:  postedAt,
 		CreatedAt: createdAt,
 		UpdatedAt: updatedAt,
-	}, nil
+	}
+
+	// Extract async callback URLs (set both or neither).
+	ackURL := headers.Get("Posthook-Ack-URL")
+	nackURL := headers.Get("Posthook-Nack-URL")
+	if ackURL != "" && nackURL != "" {
+		delivery.AckURL = ackURL
+		delivery.NackURL = nackURL
+	}
+
+	return delivery, nil
 }

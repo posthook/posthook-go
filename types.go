@@ -93,6 +93,17 @@ type deliveryPayload struct {
 	UpdatedAt string          `json:"updatedAt"`
 }
 
+// CallbackResult is the result of an ack or nack callback.
+// Both Ack() and Nack() return this for all expected outcomes, including race
+// conditions where the hook already resolved. Check Applied to determine
+// whether your callback changed the hook's state.
+type CallbackResult struct {
+	// Applied is true when the callback changed the hook's state.
+	Applied bool `json:"applied"`
+	// Status is the hook's current status (e.g. "completed", "nacked", "not_found", "conflict").
+	Status string `json:"status"`
+}
+
 // Delivery is the parsed result of a verified webhook delivery. It contains
 // the hook metadata extracted from headers and the parsed delivery body.
 type Delivery struct {
@@ -104,6 +115,14 @@ type Delivery struct {
 	PostedAt  time.Time       `json:"postedAt"`
 	CreatedAt time.Time       `json:"createdAt"`
 	UpdatedAt time.Time       `json:"updatedAt"`
+
+	// AckURL is the callback URL for acknowledging async processing.
+	// Present when both Posthook-Ack-URL and Posthook-Nack-URL headers exist.
+	AckURL string `json:"ackUrl,omitempty"`
+
+	// NackURL is the callback URL for negative acknowledgement.
+	// Present when both Posthook-Ack-URL and Posthook-Nack-URL headers exist.
+	NackURL string `json:"nackUrl,omitempty"`
 
 	// Body contains the raw HTTP request body bytes. It is not included
 	// in JSON serialization and is provided for caller convenience.

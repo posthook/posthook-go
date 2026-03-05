@@ -327,3 +327,57 @@ func TestNewSignatures_StandaloneUsage(t *testing.T) {
 	assert.Contains(t, string(delivery.Data), `"source":"standalone"`)
 	assert.Equal(t, body, delivery.Body)
 }
+
+func TestSignatures_CallbackHeaders_BothPresent(t *testing.T) {
+	key := "test-key"
+	timestamp := int64(1700000000)
+	body := []byte(`{"id":"h","path":"/t","postAt":"2026-02-22T15:00:00Z","postedAt":"2026-02-22T15:00:01Z","data":{},"createdAt":"2026-02-22T14:55:00Z","updatedAt":"2026-02-22T14:55:00Z"}`)
+
+	sig := computeTestSignature(key, timestamp, body)
+	headers := makeHeaders("h", timestamp, sig)
+	headers.Set("Posthook-Ack-URL", "https://api.posthook.io/ack/token123")
+	headers.Set("Posthook-Nack-URL", "https://api.posthook.io/nack/token123")
+
+	svc := &SignaturesService{signingKey: key}
+	now := time.Unix(timestamp+10, 0)
+	delivery, err := svc.ParseDelivery(body, headers, withNow(func() time.Time { return now }))
+	require.NoError(t, err)
+
+	assert.Equal(t, "https://api.posthook.io/ack/token123", delivery.AckURL)
+	assert.Equal(t, "https://api.posthook.io/nack/token123", delivery.NackURL)
+}
+
+func TestSignatures_CallbackHeaders_NonePresent(t *testing.T) {
+	key := "test-key"
+	timestamp := int64(1700000000)
+	body := []byte(`{"id":"h","path":"/t","postAt":"2026-02-22T15:00:00Z","postedAt":"2026-02-22T15:00:01Z","data":{},"createdAt":"2026-02-22T14:55:00Z","updatedAt":"2026-02-22T14:55:00Z"}`)
+
+	sig := computeTestSignature(key, timestamp, body)
+	headers := makeHeaders("h", timestamp, sig)
+
+	svc := &SignaturesService{signingKey: key}
+	now := time.Unix(timestamp+10, 0)
+	delivery, err := svc.ParseDelivery(body, headers, withNow(func() time.Time { return now }))
+	require.NoError(t, err)
+
+	assert.Empty(t, delivery.AckURL)
+	assert.Empty(t, delivery.NackURL)
+}
+
+func TestSignatures_CallbackHeaders_OnlyAck(t *testing.T) {
+	key := "test-key"
+	timestamp := int64(1700000000)
+	body := []byte(`{"id":"h","path":"/t","postAt":"2026-02-22T15:00:00Z","postedAt":"2026-02-22T15:00:01Z","data":{},"createdAt":"2026-02-22T14:55:00Z","updatedAt":"2026-02-22T14:55:00Z"}`)
+
+	sig := computeTestSignature(key, timestamp, body)
+	headers := makeHeaders("h", timestamp, sig)
+	headers.Set("Posthook-Ack-URL", "https://api.posthook.io/ack/token123")
+
+	svc := &SignaturesService{signingKey: key}
+	now := time.Unix(timestamp+10, 0)
+	delivery, err := svc.ParseDelivery(body, headers, withNow(func() time.Time { return now }))
+	require.NoError(t, err)
+
+	assert.Empty(t, delivery.AckURL)
+	assert.Empty(t, delivery.NackURL)
+}

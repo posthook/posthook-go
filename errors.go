@@ -70,6 +70,14 @@ type SignatureVerificationError struct{ Err *Error }
 func (e *SignatureVerificationError) Error() string { return e.Err.Error() }
 func (e *SignatureVerificationError) Unwrap() error  { return e.Err }
 
+// CallbackError is returned when an ack/nack callback fails unexpectedly.
+// Expected no-ops (404 hook deleted, 409 stale token) are returned as
+// CallbackResult with Applied=false rather than as errors.
+type CallbackError struct{ Err *Error }
+
+func (e *CallbackError) Error() string { return e.Err.Error() }
+func (e *CallbackError) Unwrap() error { return e.Err }
+
 // newError creates the appropriate typed error for the given HTTP status code.
 func newError(statusCode int, message string) error {
 	base := &Error{
