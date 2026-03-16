@@ -30,4 +30,6 @@
 //
 //	client, _ := posthook.NewClient("pk_...", posthook.WithSigningKey("ph_sk_..."))
 //	delivery, err := client.Signatures.ParseDelivery(body, r.Header)
+//
+// For full documentation, see https://docs.posthook.io
 package posthook

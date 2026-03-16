@@ -1,12 +1,14 @@
 package posthook
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"os"
@@ -171,4 +173,55 @@ func (s *SignaturesService) ParseDelivery(body []byte, headers http.Header, opts
 	}
 
 	return delivery, nil
+}
+
+// HTTPHandler wraps a delivery handler as an http.HandlerFunc that verifies
+// webhook signatures and dispatches to the handler. The handler's Result
+// determines the HTTP response: Ack returns 200, Accept returns 202, and
+// Nack returns 500. If signature verification fails, a 401 response is sent.
+func (s *SignaturesService) HTTPHandler(handler func(context.Context, *Delivery) Result) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "failed to read body", http.StatusBadRequest)
+			return
+		}
+
+		delivery, err := s.ParseDelivery(body, r.Header)
+		if err != nil {
+			http.Error(w, "signature verification failed", http.StatusUnauthorized)
+			return
+		}
+
+		var result Result
+		func() {
+			defer func() {
+				if rec := recover(); rec != nil {
+					result = Nack(fmt.Errorf("handler panic: %v", rec))
+				}
+			}()
+			result = handler(r.Context(), delivery)
+		}()
+
+		w.Header().Set("Content-Type", "application/json")
+		switch result.kind {
+		case "ack":
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"ok":true}`))
+		case "accept":
+			w.Header().Set("Posthook-Async-Timeout", strconv.Itoa(result.timeout))
+			w.WriteHeader(http.StatusAccepted)
+			w.Write([]byte(`{"ok":true}`))
+		case "nack":
+			w.WriteHeader(http.StatusInternalServerError)
+			msg := "handler failed"
+			if result.err != nil {
+				msg = result.err.Error()
+			}
+			fmt.Fprintf(w, `{"error":%q}`, msg)
+		default:
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"ok":true}`))
+		}
+	}
 }

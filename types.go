@@ -124,9 +124,31 @@ type Delivery struct {
 	// Present when both Posthook-Ack-URL and Posthook-Nack-URL headers exist.
 	NackURL string `json:"nackUrl,omitempty"`
 
+	// WS contains WebSocket-specific delivery metadata.
+	// This field is nil for HTTP deliveries (via ParseDelivery).
+	WS *WebSocketMeta `json:"ws,omitempty"`
+
 	// Body contains the raw HTTP request body bytes. It is not included
 	// in JSON serialization and is provided for caller convenience.
 	Body []byte `json:"-"`
+}
+
+// WebSocketMeta contains metadata specific to WebSocket-delivered hooks.
+type WebSocketMeta struct {
+	Attempt        int32           `json:"attempt"`
+	MaxAttempts    int32           `json:"maxAttempts"`
+	ForwardRequest *ForwardRequest `json:"forwardRequest,omitempty"`
+}
+
+// ForwardRequest contains the forwarded HTTP request metadata from the
+// original webhook delivery attempt.
+type ForwardRequest struct {
+	Body              string `json:"body"`
+	Signature         string `json:"signature"`
+	Authorization     string `json:"authorization,omitempty"`
+	PosthookId        string `json:"posthookId,omitempty"`
+	PosthookTimestamp string `json:"posthookTimestamp,omitempty"`
+	PosthookSignature string `json:"posthookSignature,omitempty"`
 }
 
 // HookScheduleParams contains the parameters for scheduling a new hook.

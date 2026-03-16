@@ -191,7 +191,7 @@ for hook, err := range iter {
 
 ### Delete a hook
 
-Returns `nil` error on both 200 (deleted) and 404 (already delivered or gone):
+To cancel a pending hook, delete it before delivery. Idempotent — returns `nil` error on both 200 (deleted) and 404 (already deleted):
 
 ```go
 _, err := client.Hooks.Delete(ctx, "hook-uuid")
@@ -270,7 +270,7 @@ delivery, err := client.Signatures.ParseDelivery(body, r.Header,
 
 ## Async Hooks
 
-When [async hooks](https://posthook.io/docs/essentials/async-hooks) are enabled, `ParseDelivery` populates `AckURL` and `NackURL` on the delivery. Return 202 from your handler and call back when processing completes.
+When [async hooks](https://docs.posthook.io/essentials/async-hooks) are enabled, `ParseDelivery` populates `AckURL` and `NackURL` on the delivery. Return 202 from your handler and call back when processing completes.
 
 ```go
 func handleWebhook(w http.ResponseWriter, r *http.Request) {
@@ -314,6 +314,136 @@ queue.Add("transcode", map[string]string{
 })
 ```
 
+## WebSocket Listener
+
+Receive hooks in real time over a persistent WebSocket connection instead of
+running an HTTP server. Enable WebSocket delivery in your project settings first.
+
+### Callback style (`Listen`)
+
+Pass a handler function. The SDK manages the connection, heartbeat, and
+reconnection automatically.
+
+```go
+client, _ := posthook.NewClient("pk_...")
+
+listener, err := client.Hooks.Listen(ctx, func(ctx context.Context, d *posthook.Delivery) posthook.Result {
+    fmt.Println(d.HookID, d.Data)
+    fmt.Printf("Attempt %d/%d\n", d.WS.Attempt, d.WS.MaxAttempts)
+
+    return posthook.Ack()
+},
+    posthook.WithMaxConcurrency(5),
+    posthook.OnConnected(func(info posthook.ConnectionInfo) {
+        fmt.Println("Connected:", info.ProjectName)
+    }),
+    posthook.OnDisconnected(func(err error) {
+        fmt.Println("Disconnected:", err)
+    }),
+)
+if err != nil {
+    log.Fatal(err)
+}
+
+// Block until the listener is closed
+listener.Wait()
+```
+
+**Result types:**
+
+| Factory | Effect |
+|---------|--------|
+| `posthook.Ack()` | Processing complete — hook is marked as delivered immediately |
+| `posthook.Nack(err)` | Reject — triggers retry according to project settings |
+| `posthook.Accept(timeoutSecs)` | Async — you have `timeoutSecs` to call back via HTTP (see below) |
+
+If your handler panics, the SDK automatically sends a nack with the panic message.
+
+### Async processing with `Accept`
+
+Use `Accept` when your handler needs more time than the 10-second ack window.
+After returning `Accept`, POST to the callback URLs on the delivery to report
+the outcome:
+
+```go
+listener, _ := client.Hooks.Listen(ctx, func(ctx context.Context, d *posthook.Delivery) posthook.Result {
+    // Kick off background work, save the callback URLs
+    queue.Add("process", map[string]string{
+        "ackUrl":  d.AckURL,
+        "nackUrl": d.NackURL,
+    })
+    return posthook.Accept(300) // 5 minutes to call back
+})
+
+// Later, in the background worker:
+http.Post(job.AckURL, "application/json", nil)
+// or on failure:
+http.Post(job.NackURL, "application/json", strings.NewReader(`{"error":"failed"}`))
+```
+
+If neither URL is called before the deadline, the hook is retried.
+
+### Iterator style (`Stream`)
+
+For more control, use `Stream()` which returns a channel of deliveries:
+
+```go
+stream, err := client.Hooks.Stream(ctx,
+    posthook.OnConnected(func(info posthook.ConnectionInfo) {
+        fmt.Println("Connected:", info.ProjectName)
+    }),
+)
+if err != nil {
+    log.Fatal(err)
+}
+
+for delivery := range stream.Deliveries() {
+    fmt.Println(delivery.HookID, delivery.Data)
+    stream.Ack(delivery.HookID)
+    // or: stream.Accept(delivery.HookID, 300)
+    // or: stream.Nack(delivery.HookID, errors.New("bad data"))
+}
+```
+
+### HTTP fallback
+
+If your project has a domain configured, hooks are delivered via HTTP when no
+WebSocket listener is connected. You can run both an HTTP endpoint and a
+WebSocket listener — the server uses WebSocket when available and falls back to
+HTTP automatically. Since both paths use the same `Result` type, you can share
+your handler logic:
+
+```go
+func processHook(ctx context.Context, d *posthook.Delivery) posthook.Result {
+    processOrder(d.Data)
+    return posthook.Ack()
+}
+
+// HTTP delivery (net/http endpoint)
+http.HandleFunc("/webhooks/order", func(w http.ResponseWriter, r *http.Request) {
+    body, _ := io.ReadAll(r.Body)
+    delivery, err := client.Signatures.ParseDelivery(body, r.Header)
+    if err != nil {
+        http.Error(w, "invalid signature", http.StatusUnauthorized)
+        return
+    }
+    result := processHook(r.Context(), delivery)
+    // ... map result to HTTP response
+})
+
+// WebSocket delivery (runs alongside)
+listener, _ := client.Hooks.Listen(ctx, processHook)
+```
+
+### Connection lifecycle
+
+- **Reconnection:** On disconnect the SDK reconnects with exponential backoff
+  (`min(1s * 2^attempts, 30s)`), up to 10 attempts.
+- **Heartbeat:** If no server activity is detected for 45 seconds the
+  connection is considered stale and force-closed for reconnection.
+- **Auth errors:** Close codes `4001` and `4003` abort immediately without
+  reconnecting.
+
 ## Error Handling
 
 All API errors are typed, enabling precise error handling with `errors.As()`:
@@ -355,8 +485,16 @@ client, err := posthook.NewClient("pk_...",
 |--------|-------------|---------|
 | `WithBaseURL` | Custom API base URL | `https://api.posthook.io` |
 | `WithHTTPClient` | Custom `*http.Client` | 30s timeout |
-| `WithUserAgent` | Custom User-Agent header | `posthook-go/1.0.0` |
+| `WithUserAgent` | Custom User-Agent header | `posthook-go/{version}` |
 | `WithSigningKey` | Signing key for signature verification | — |
+
+## Resources
+
+- [Documentation](https://docs.posthook.io) — guides, concepts, and patterns
+- [API Reference](https://docs.posthook.io/api-reference/introduction) — endpoint specs and examples
+- [Quickstart](https://docs.posthook.io/quickstart) — get started in under 2 minutes
+- [Pricing](https://posthook.io/pricing) — free tier included
+- [Status](https://status.posthook.io) — uptime and incident history
 
 ## Quota Info
 

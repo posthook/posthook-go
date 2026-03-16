@@ -142,9 +142,8 @@ func (s *HooksService) ListAll(ctx context.Context, params *HookListAllParams) i
 	}
 }
 
-// Delete removes a scheduled hook. It returns nil error on both 200 (deleted)
-// and 404 (already delivered or gone) — a hook you're canceling may have
-// already been delivered, and that's not an error.
+// Delete removes a hook. To cancel a pending hook, delete it before
+// delivery. Returns nil error on both 200 (deleted) and 404 (already deleted).
 func (s *HooksService) Delete(ctx context.Context, id string) (*Response, error) {
 	if id == "" {
 		return nil, fmt.Errorf("posthook: hook id is required")
@@ -157,7 +156,7 @@ func (s *HooksService) Delete(ctx context.Context, id string) (*Response, error)
 
 	resp, err := s.client.do(ctx, req, nil)
 	if err != nil {
-		// Swallow 404 — the hook may already be delivered or deleted.
+		// Swallow 404 — the hook was already deleted.
 		var notFound *NotFoundError
 		if errors.As(err, &notFound) {
 			return resp, nil

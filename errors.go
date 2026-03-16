@@ -78,6 +78,13 @@ type CallbackError struct{ Err *Error }
 func (e *CallbackError) Error() string { return e.Err.Error() }
 func (e *CallbackError) Unwrap() error { return e.Err }
 
+// WebSocketError is returned when a WebSocket connection error occurs,
+// such as authentication failure or exceeding the maximum reconnection attempts.
+type WebSocketError struct{ Err *Error }
+
+func (e *WebSocketError) Error() string { return e.Err.Error() }
+func (e *WebSocketError) Unwrap() error { return e.Err }
+
 // newError creates the appropriate typed error for the given HTTP status code.
 func newError(statusCode int, message string) error {
 	base := &Error{
